@@ -35,13 +35,11 @@ sigma=sqrt(sigma2);
 y=x+sigma*randn(size(x));     % add noise
 
 
-%% Inputs
-
-% Data:
+%% Data:
 Data.y=y; % observations
-Data.samptime=samptime; % the sample time
+Data.samptime=samptime; % the sample time of observations
 
-% ODE:
+%% ODE:
 ODE.fun=@LV; % ODE functions
 ODE.num=4;   % the number of the parameters
 ODE.discrete{1}=1.5:0.1:2.5;  %the discretized ranges of the parameters
@@ -54,45 +52,93 @@ ODE.prior{2}=@(x) gampdf(x,4,0.5);
 ODE.prior{3}=@(x) gampdf(x,4,0.5);
 ODE.prior{4}=@(x) gampdf(x,4,0.5);
 
+%% X0:
+X0.indicator=1; % Indicate whether X0 prior is separately specified. If specified, X0.indicator=1
+if X0.indicator==1
+   X0.discrete{1}=linspace(1,10,20);% the discretized ranges of x0
+   X0.discrete{2}=linspace(1,10,20);
+   X0.initial=[5 3]; %initial values of x0;
+   X0.prior{1}=@(x) unifpdf(x,0,10); % prior of x0
+   X0.prior{2}=@(x) unifpdf(x,0,10);
+end
 
-% GP:
+%% GP:
+%%%%%%%%%%%%%%% RBF Kernel %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 GP.fun=@GPcov; % GP covariance function: c(t,t')
 GP.fun_d=@dGPcov; % GP derivative d{c(t,t')}/dt
 GP.fun_dd=@ddGPcov; %GP derivative d^2{c(t,t')}/dtdt'
 GP.num=3; % the number of the GP hyperparameters (we put the noise std to the end of the hyperparameter vector)
 GP.discrete{1}=0.1:0.1:1; %(pref) % the discretized ranges of the GP hyperparameters
 GP.discrete{2}=5:5:50;    %(lengthscale)
-GP.discrete{3}=0.1:0.1:1; %(sigma)
+GP.discrete{GP.num}=0.1:0.1:1; %(sigma)
 GP.prior{1}=@(x) unifpdf(x,0,100);%prior for GP hyperparameters
 GP.prior{2}=@(x) unifpdf(x,0,100);
-GP.prior{3}=@(x) gampdf(x,1,1);
+GP.prior{GP.num}=@(x) gampdf(x,1,1);
+GP.initial=[1 10 0.5]; %initial values of GP hyperparameters
 
+%%%%%%%%%%%%%%% Sigmoid Kernel %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% GP.fun=@GPcovSIG; % GP covariance function: c(t,t')
+% GP.fun_d=@dGPcovSIG; % GP derivative d{c(t,t')}/dt
+% GP.fun_dd=@ddGPcovSIG; %GP derivative d^2{c(t,t')}/dtdt'
+% GP.num=4; % the number of the GP hyperparameters (we put the noise std to the end of the hyperparameter vector)
+% GP.discrete{1}=1:2:20;%    % pref % the discretized ranges of the GP hyperparameters
+% GP.discrete{2}=1:2:20;%    % a
+% GP.discrete{3}=1:2:20;%    % b
+% GP.discrete{GP.num}=0.1:0.1:1;% % sigma
+% GP.prior{1}=@(x) unifpdf(x,0,100);%prior for GP hyperparameters
+% GP.prior{2}=@(x) unifpdf(x,0,100);
+% GP.prior{3}=@(x) unifpdf(x,0,100);
+% GP.prior{GP.num}=@(x) gampdf(x,1,1);
+% GP.initial=[10 10 10 0.5]; %initial values of GP hyperparameters
 
 %%%%%%%%%% Initialization of X by using GP %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+disp('--------------Fit the data by GP to obtain the initial X-------------------');
+    
+[MeanX,StdX]=FitGP(Data,GP);
 
-[MeanX,StdX]=FitGP(y,GP,samptime);
+disp('--------------GP Fit is done, Plot GP Fit results-------------------');
 
+disp('--------------Press /Enter/ to start sampling-------------------');
+for dimension=1:2
+    figure
+    plot(truetime(itrue),MeanX(:,dimension),'r-');
+    hold on
+    plot(truetime(itrue),x(:,dimension),'o-')
+    hold on
+    plot(truetime(itrue),MeanX(:,dimension)-3*StdX(:,dimension),'r-')
+    hold on
+    plot(truetime(itrue),MeanX(:,dimension)+3*StdX(:,dimension),'r-')
+    hold on
+    plot(truetime(itrue),y(:,dimension),'*')
+end
+
+pause
 
 GP.initial_X{1}=MeanX; % initial mean of X
 GP.initial_X{2}=StdX; % initial std of X
 GP.initial_X{3}=20; % the number of discretized bins for X
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-GP.initial=[1 10 0.5]; %initial values of GP hyperparameters
 
 
-% Iter:
-Iteration.total=20; %the number of the total iterations
+
+%% Iter:
+Iteration.total=100; %the number of the total iterations
 Iteration.sub=10;   %the number of the sub iterations
 
 
 %% Solver
-[samptheta, samphyper, SAMPLEX]= ode_ComGP_solve(Data, ODE, GP, Iteration);
+disp('--------------Start Sampling-------------------');
+if X0.indicator==1
+    [samptheta, samphyper, samplex0, SAMPLEX]= ode_ComGP_solve_X0(Data, ODE, GP, Iteration, X0);
+else
+    [samptheta, samphyper, SAMPLEX]= ode_ComGP_solve(Data, ODE, GP, Iteration);
+end
 
+
+disp('--------------Sampling is done-------------------');
 
 %% Plot
 
-disp('Estimated ODE Parameters [alpha, beta, gamma, delta] (Mean and Std)');
+disp('---------------Estimated ODE Parameters [alpha, beta, gamma, delta] (Mean and Std)----------------------');
 
 MUtheta=mean(samptheta)
 STDtheta=std(samptheta)
@@ -120,6 +166,7 @@ for i=1:DM
     
     legend('Reconstruction with ODE Parameter Samples (Mean+/-Std)','Ground Truth', 'Observations')
 end
+
 
 
 
